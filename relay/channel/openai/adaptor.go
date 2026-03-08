@@ -39,6 +39,17 @@ type Adaptor struct {
 	ResponseFormat string
 }
 
+func shouldApplyCodexResponsesCompat(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(normalized, "codex") {
+		return true
+	}
+	return strings.HasPrefix(normalized, "gpt-5")
+}
+
 // parseReasoningEffortFromModelSuffix 从模型名称中解析推理级别
 // support OAI models: o1-mini/o3-mini/o4-mini/o1/o3 etc...
 // minimal effort only available in gpt-5
@@ -227,6 +238,16 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	if info.ChannelType == constant.ChannelTypeOpenRouter {
 		header.Set("HTTP-Referer", "https://www.newapi.ai")
 		header.Set("X-Title", "New API")
+	}
+	if info != nil &&
+		(info.RelayMode == relayconstant.RelayModeResponses || info.RelayMode == relayconstant.RelayModeResponsesCompact) &&
+		shouldApplyCodexResponsesCompat(info.UpstreamModelName) {
+		if header.Get("OpenAI-Beta") == "" {
+			header.Set("OpenAI-Beta", "responses=experimental")
+		}
+		if header.Get("originator") == "" {
+			header.Set("originator", "codex_cli_rs")
+		}
 	}
 	return nil
 }
@@ -591,6 +612,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	}
 	if info != nil && request.Reasoning != nil && request.Reasoning.Effort != "" {
 		info.ReasoningEffort = request.Reasoning.Effort
+	}
+	if shouldApplyCodexResponsesCompat(request.Model) {
+		if len(request.Instructions) == 0 {
+			request.Instructions = json.RawMessage(`""`)
+		}
+		if len(request.Store) == 0 {
+			request.Store = json.RawMessage("false")
+		}
 	}
 	return request, nil
 }

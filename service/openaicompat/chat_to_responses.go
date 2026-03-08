@@ -11,6 +11,17 @@ import (
 	"github.com/samber/lo"
 )
 
+func shouldUseCodexStyleResponsesInput(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(normalized, "codex") {
+		return true
+	}
+	return strings.HasPrefix(normalized, "gpt-5")
+}
+
 func normalizeChatImageURLToString(v any) any {
 	switch vv := v.(type) {
 	case string:
@@ -85,6 +96,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	}
 
 	var instructionsParts []string
+	codexStyleInput := shouldUseCodexStyleResponsesInput(req.Model)
 	inputItems := make([]map[string]any, 0, len(req.Messages))
 
 	for _, msg := range req.Messages {
@@ -184,7 +196,21 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		}
 
 		if msg.IsStringContent() {
-			item["content"] = msg.StringContent()
+			content := msg.StringContent()
+			if codexStyleInput {
+				textType := "input_text"
+				if role == "assistant" {
+					textType = "output_text"
+				}
+				item["content"] = []map[string]any{
+					{
+						"type": textType,
+						"text": content,
+					},
+				}
+			} else {
+				item["content"] = content
+			}
 			inputItems = append(inputItems, item)
 
 			if role == "assistant" {

@@ -50,10 +50,28 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		return string(constant.EndpointTypeOpenAIResponseCompact)
 	}
+	if isResponsesPreferredModel(modelName) {
+		return string(constant.EndpointTypeOpenAIResponse)
+	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		return string(constant.EndpointTypeOpenAIResponse)
 	}
 	return normalized
+}
+
+func isResponsesPreferredModel(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	// Responses-first families. Most codex and gpt-5.x upstreams only expose /v1/responses.
+	if strings.Contains(normalized, "codex") {
+		return true
+	}
+	if strings.HasPrefix(normalized, "gpt-5") {
+		return true
+	}
+	return false
 }
 
 func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool) testResult {
@@ -122,7 +140,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		}
 
 		// responses-only models
-		if strings.Contains(strings.ToLower(testModel), "codex") {
+		if isResponsesPreferredModel(testModel) {
 			requestPath = "/v1/responses"
 		}
 
@@ -599,7 +617,7 @@ func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
 }
 
 func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool) dto.Request {
-	testResponsesInput := json.RawMessage(`[{"role":"user","content":"hi"}]`)
+	testResponsesInput := json.RawMessage(`[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]`)
 
 	// 根据端点类型构建不同的测试请求
 	if endpointType != "" {
@@ -629,9 +647,11 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 		case constant.EndpointTypeOpenAIResponse:
 			// 返回 OpenAIResponsesRequest
 			return &dto.OpenAIResponsesRequest{
-				Model:  model,
-				Input:  json.RawMessage(`[{"role":"user","content":"hi"}]`),
-				Stream: lo.ToPtr(isStream),
+				Model:        model,
+				Input:        testResponsesInput,
+				Instructions: json.RawMessage(`""`),
+				Store:        json.RawMessage("false"),
+				Stream:       lo.ToPtr(isStream),
 			}
 		case constant.EndpointTypeOpenAIResponseCompact:
 			// 返回 OpenAIResponsesCompactionRequest
@@ -692,12 +712,14 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 		}
 	}
 
-	// Responses-only models (e.g. codex series)
-	if strings.Contains(strings.ToLower(model), "codex") {
+	// Responses-only models (e.g. codex and gpt-5.x families)
+	if isResponsesPreferredModel(model) {
 		return &dto.OpenAIResponsesRequest{
-			Model:  model,
-			Input:  json.RawMessage(`[{"role":"user","content":"hi"}]`),
-			Stream: lo.ToPtr(isStream),
+			Model:        model,
+			Input:        testResponsesInput,
+			Instructions: json.RawMessage(`""`),
+			Store:        json.RawMessage("false"),
+			Stream:       lo.ToPtr(isStream),
 		}
 	}
 
